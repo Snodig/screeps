@@ -11,6 +11,7 @@ var roleHarvester = {
 
     /** @param {Creep} creep **/
     run: function(creep) {
+        creep.say('lol');
         if(creep.carry.energy < creep.carryCapacity)
         {
             creep.memory.currentSource = 0;
