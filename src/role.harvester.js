@@ -1,118 +1,190 @@
 /*
- * Harvester role and functions
+ * Harvester role and generic functions
  */
 
 module.exports = {
-    run : run,
-    deposit:deposit,
-    findSource:findSource,
-    mineSource:mineSource
+  run : run,
+  deposit:deposit,
+  findSource:findSource,
+  mineSource:mineSource
 };
 
-/** @param {Creep} creep **/
+var utils = require('utils');
+var controllerConstruction = require('controller.construction');
+
+function canNavigateTo(creep, target)
+{
+  var targetPath = creep.pos.findPathTo(target, {maxOps:200, maxRooms:1});
+  if(!targetPath || targetPath.length == 0)
+  {
+    return false;
+  }
+  var targetPos = creep.room.getPositionAt(targetPath[targetPath.length-1].x, targetPath[targetPath.length-1].y);
+  return (targetPos.inRangeTo(target.pos, 1));
+}
+
 function findSource(creep)
 {
-    var sources = creep.room.find(FIND_SOURCES);
-    for(i = 0; i < sources.length; ++i)
-    {
-        let targetPath = creep.pos.findPathTo(sources[i]);
-        let targetPos = creep.room.getPositionAt(targetPath[targetPath.length-1].x, targetPath[targetPath.length-1].y);
-        if(targetPos.inRangeTo(sources[i].pos, 1))
-        {
-            return creep.memory.currentSource = sources[i].id;
-        }
-        else
-        {
-            continue;
-        }
-    }
+  var closest = creep.pos.findClosestByRange(FIND_SOURCES_ACTIVE);
+  if(canNavigateTo(creep, closest))
+  {
+    return creep.memory.currentSource = closest.id;
+  }
 
-    return 0;
+  var sources = creep.room.find(FIND_SOURCES);
+  for(i = 0; i < sources.length; ++i)
+  {
+    if(canNavigateTo(creep, sources[i]))
+    {
+      return creep.memory.currentSource = sources[i].id;
+    }
+    else
+    {
+      continue;
+    }
+  }
+
+  return 0;
 }
 
-/** @param {Creep} creep **/
+function findMineral(creep)
+{
+  var minerals = creep.room.find(FIND_MINERALS);
+  for(i = 0; i < minerals.length; ++i)
+  {
+    if(canNavigateTo(creep, minerals[i]))
+    {
+      return creep.memory.currentSource = minerals[i].id;
+    }
+    else
+    {
+      continue;
+    }
+  }
+
+  return 0;
+}
+
+function findExtractor(creep)
+{
+  var extractors = creep.room.find(FIND_STRUCTURES, {
+      filter: (structure) => structure.structureType == STRUCTURE_EXTRACTOR
+  });
+  for(i = 0; i < extractors.length; ++i)
+  {
+    if(canNavigateTo(creep, extractors[i]))
+    {
+      return creep.memory.currentSource = extractors[i].id;
+    }
+    else
+    {
+      continue;
+    }
+  }
+
+  return 0;
+}
+
 function mineSource(creep)
 {
-    if(creep.memory.currentSource != 0)
+  if(creep.memory.currentSource != 0)
+  {
+    // Mine current source
+    var source = Game.getObjectById(creep.memory.currentSource);
+
+    if(creep.harvest(source) == ERR_NOT_IN_RANGE)
     {
-        // Mine current source
-        var source = Game.getObjectById(creep.memory.currentSource);
-        console.log(creep.name + " using saved source: " + creep.memory.currentSource)
-
-        let targetPath = creep.pos.findPathTo(source);
-        let targetPos = creep.room.getPositionAt(targetPath[targetPath.length-1].x, targetPath[targetPath.length-1].y);
-        if(targetPos.inRangeTo(source.pos, 1))
+      if(canNavigateTo(creep, source))
+      {
+        let err = creep.moveTo(source);
+        if(err == ERR_TIRED)
         {
-            let err = creep.moveTo(source);
-            creep.harvest(source);
-            if(err != OK)
-            {
-                creep.say(err);
-            }
+          controllerConstruction.pleasePaveSwamp(creep.pos);
         }
-        else
+        else if(err != OK)
         {
-            creep.say("No path");
-            creep.memory.currentSource = 0;
-            return false;
+          creep.say(utils.errStr(err));
         }
+      }
+      else
+      {
+        creep.say("No path");
+        creep.memory.currentSource = 0;
+        return false;
+      }
+    }
 
-        return true;
+    return true;
+  }
+  else
+  {
+    // No available source found, hover around the closest source
+    var closest = creep.pos.findClosestByRange(FIND_SOURCES);
+    if(creep.pos.getRangeTo(closest) > 1)
+    {
+      creep.moveTo(closest);
     }
     else
     {
-        // No available source found, hover around the closest source
-        var closest = creep.pos.findClosestByRange(FIND_SOURCES);
-        if(creep.pos.getRangeTo(closest) > 3)
-        {
-            creep.moveTo(closest);
-        }
-        else
-        {
-            var spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS)
-            creep.moveTo(spawn);
-        }
-
-        return false;
+      var spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS)
+      creep.moveTo(spawn);
     }
+
+    return false;
+  }
 }
 
-/** @param {Creep} creep **/
 function deposit(creep)
 {
-    var targets = creep.room.find(FIND_STRUCTURES, {
-            filter: (structure) => {
-                return (structure.structureType == STRUCTURE_EXTENSION ||
-                        structure.structureType == STRUCTURE_SPAWN ||
-                        structure.structureType == STRUCTURE_TOWER) && structure.energy < structure.energyCapacity;
-            }
-    });
+  var targets = creep.room.find(FIND_STRUCTURES, {
+      filter: (structure) => {
+        return (structure.structureType == STRUCTURE_TOWER)
+             && structure.energy < structure.energyCapacity;
+      }
+  });
 
-    if(targets.length > 0)
+  if(!targets.length)
+  {
+      targets = creep.room.find(FIND_STRUCTURES, {
+          filter: (structure) => {
+            return (structure.structureType  == STRUCTURE_EXTENSION ||
+                    structure.structureType == STRUCTURE_SPAWN)
+                 && structure.energy < structure.energyCapacity;
+          }
+      });
+  }
+
+  if(targets.length)
+  {
+    if(creep.transfer(targets[0], RESOURCE_ENERGY) == ERR_NOT_IN_RANGE)
     {
-        if(creep.transfer(targets[0], RESOURCE_ENERGY) == ERR_NOT_IN_RANGE)
-        {
-            creep.moveTo(targets[0]);
-        }
+      creep.moveTo(targets[0]);
     }
-    else
-    {
-        creep.say("Idle")
-        var spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS)
-        creep.moveTo(spawn);
-    }
+  }
+  else
+  {
+    creep.say("Idle")
+
+    var spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS)
+    creep.moveTo(spawn);
+  }
 }
 
-/** @param {Creep} creep **/
+// Idea: Mine and drop to ground, have others pick up
+
 function run(creep)
 {
-    if(creep.carry.energy < creep.carryCapacity)
+  if(creep.carry.energy < creep.carryCapacity)
+  {
+    creep.memory.currentSource = findExtractor(creep);
+    if(creep.memory.currentSource == 0)
     {
-        creep.memory.currentSource = findSource(creep);
-        mineSource(creep);
+      creep.memory.currentSource = findSource(creep);
     }
-    else // Reached capacity
-    {
-        deposit(creep);
-    }
+    mineSource(creep);
+  }
+  else // Reached capacity
+  {
+    deposit(creep);
+  }
 }
